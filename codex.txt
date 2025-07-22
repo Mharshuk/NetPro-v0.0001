@@ -1,0 +1,94 @@
+# === Codex Mega-Prompt: “Edge-Collector v0.1”  ===============================
+#
+# GOAL
+#   Generate the complete source for a single Dockerized Python service that:
+#     1. Ingests Cloud Flow Logs delivered via HTTPS (AWS S3 event, Azure Blob event,
+#        or GCP Pub/Sub pull).  All records are JSON or gzip-compressed JSON/CSV.
+#     2. Optionally accepts 128-byte packet-mirror slices sent to it over TLS-443.
+#        (PCAP stream or framed UDP inside TLS is acceptable – simplest path.)
+#     3. Normalizes every record into the unified JSON schema
+#            {
+#              "src_ip":       "203.0.113.5",
+#              "dst_ip":       "10.0.1.23",
+#              "src_port":     52512,
+#              "dst_port":     443,
+#              "protocol":     6,
+#              "bytes":        8765,
+#              "packets":      1234,
+#              "first_seen":   1627028412.123,
+#              "last_seen":    1627028424.789,
+#              "cloud":        "aws" | "azure" | "gcp" | "mirror",
+#              "account":      "1234567890",          # if available
+#              "vpc_id":       "vpc-0abc",            # if available
+#              "extra": { ... }                       # tcpFlags / icmpType / JA3 / vlan / etc.
+#            }
+#     4. Publishes each JSON record to Kafka topic  "flows.raw-json"
+#        • Partition-key = string(dst_port) when present else string(protocol)
+#        • Producer settings: acks=all, idempotence=true, linger.ms=50
+#     5. Buffers locally: if Kafka unreachable, spill to /data/buffer; re-submit
+#        on recovery. Retain 24 h then prune.
+#
+# NON-FUNCTIONAL TARGETS
+#   • Sustains 10k flow-records/sec on 2 CPU cores and <1 GiB RAM.
+#   • All configuration by ENV vars (see ENV list below).
+#   • One Dockerfile (Alpine or slim-Debian) – final image <200 MB.
+#   • Graceful shutdown (SIGTERM) flushes local queue then exits.
+#
+# ENVIRONMENT VARIABLES  (document & parse them!)
+#   KAFKA_BOOTSTRAP="kafka:9092"
+#   KAFKA_TOPIC="flows.raw-json"
+#   KAFKA_SSL_CERT, KAFKA_SSL_KEY, KAFKA_SSL_CA   # optional mTLS
+#
+#   AWS_S3_BUCKET       (if set, enable AWS path)
+#   AWS_REGION
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#
+#   AZURE_BLOB_CONNSTR  (if set, enable Azure path)
+#
+#   GCP_PROJECT         (if set, enable GCP path)
+#   GCP_SUB_ID
+#   GOOGLE_APPLICATION_CREDENTIALS
+#
+#   MIRROR_TLS_CERT, MIRROR_TLS_KEY              # enable packet mirror listener
+#   MIRROR_PORT=443
+#
+# IMPLEMENTATION GUIDELINES
+#   • Use Python 3.11.
+#   • Concurrency: trio-based or asyncio; one task per source-type.
+#   • AWS path: use boto3 S3-event polling or SQS notification; handle gz/zip.
+#   • Azure: azure-storage-blob changefeed or blob-event polling.
+#   • GCP: google-cloud-pubsub subscriber pull with max_in_flight=500.
+#   • Mirror listener: aioquic / aiohttp TLS server; accept POST’d PCAP slices.
+#     Parse first 128 B with dpkt or scapy to fill src/dst/proto/ports and infer bytes=packets=1.
+#   • Normalisation helpers: ipaddress lib for v4/v6, struct.unpack for PCAP header.
+#   • Local buffer: SQLite WAL or disk queue (e.g., diskqueue python pkg).
+#   • Logging: structlog, JSON to stdout.
+#
+# DELIVERABLES
+#   root/
+#     Dockerfile
+#     requirements.txt
+#     entrypoint.sh
+#     src/
+#       __init__.py
+#       config.py        # parse ENV
+#       kafka.py         # producer with retries + back-pressure
+#       buffer.py        # local spill/replay
+#       ingest/
+#         aws_s3.py
+#         azure_blob.py
+#         gcp_pubsub.py
+#         mirror.py
+#       normalise.py     # flow-record → canonical dict
+#       main.py          # orchestrates asyncio tasks
+#
+# TEST HARNESS
+#   • Unit tests (pytest) for normalise() on sample AWS, Azure, GCP log lines.
+#   • docker-compose.yml with Kafka + MinIO (S3) + fake Pub/Sub emulator.
+#
+# OUTPUT
+#   Provide full source code & docker-compose file ready to `docker compose up`.
+#
+# ============================================================================
+
