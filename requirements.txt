@@ -1,0 +1,10 @@
+boto3
+azure-storage-blob
+google-cloud-pubsub
+aiohttp
+aioquic
+structlog
+kafka-python
+asyncio
+diskqueue
+pytest
